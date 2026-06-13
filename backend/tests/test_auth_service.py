@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.models.enums import UserRole
 from app.models.user import User
@@ -18,7 +19,14 @@ def db_session() -> Mock:
 def test_register_reviewer_requires_approval_and_notifies_admins(db_session: Mock) -> None:
     service = AuthService(db_session)
     service.notifications = Mock()
-    db_session.scalar.return_value = None
+
+    def scalar_side_effect(statement):
+        column_name = statement.whereclause.left.name
+        if column_name in {"email", "id_number"}:
+            return None
+        return None
+
+    db_session.scalar.side_effect = scalar_side_effect
 
     payload = UserRegisterRequest(
         email="reviewer@example.com",
@@ -42,7 +50,14 @@ async def test_register_external_reviewer_stores_cv_and_notifies_admins(db_sessi
     service.notifications = Mock()
     service.files = Mock()
     service.files.store_reviewer_cv = AsyncMock(return_value=None)
-    db_session.scalar.return_value = None
+
+    def scalar_side_effect(statement):
+        column_name = statement.whereclause.left.name
+        if column_name in {"email", "id_number"}:
+            return None
+        return None
+
+    db_session.scalar.side_effect = scalar_side_effect
 
     payload = UserRegisterRequest(
         email="external@example.com",
@@ -62,6 +77,75 @@ async def test_register_external_reviewer_stores_cv_and_notifies_admins(db_sessi
     service.files.store_reviewer_cv.assert_awaited_once_with(user=user, upload=upload)
     service.notifications.notify_admins_of_pending_reviewer.assert_called_once_with(user)
     db_session.commit.assert_called_once()
+
+
+def test_register_user_rejects_duplicate_id_number(db_session: Mock) -> None:
+    service = AuthService(db_session)
+
+    def scalar_side_effect(statement):
+        column_name = statement.whereclause.left.name
+        if column_name == "email":
+            return None
+        if column_name == "id_number":
+            return User(
+                id=uuid4(),
+                email="existing@example.com",
+                full_name="Existing User",
+                role=UserRole.STUDENT,
+                id_number="123456789",
+                is_active=True,
+                is_approved=True,
+                requires_manual_approval=False,
+            )
+        return None
+
+    db_session.scalar.side_effect = scalar_side_effect
+
+    payload = UserRegisterRequest(
+        email="student@example.com",
+        password="averysecurepass",
+        full_name="Student Example",
+        role=UserRole.STUDENT,
+        id_number="123456789",
+        affiliation="SCE",
+    )
+
+    with pytest.raises(ValueError, match="ID number is already registered"):
+        service.register_user(payload)
+
+    db_session.add.assert_not_called()
+    db_session.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_register_external_reviewer_translates_duplicate_id_integrity_error(db_session: Mock) -> None:
+    service = AuthService(db_session)
+    service.notifications = Mock()
+    service.files = Mock()
+    service.files.store_reviewer_cv = AsyncMock(return_value=None)
+
+    def scalar_side_effect(statement):
+        column_name = statement.whereclause.left.name
+        if column_name in {"email", "id_number"}:
+            return None
+        return None
+
+    db_session.scalar.side_effect = scalar_side_effect
+    db_session.flush.side_effect = IntegrityError("INSERT INTO users ...", {}, Exception("duplicate key value"))
+
+    payload = UserRegisterRequest(
+        email="external@example.com",
+        password="averysecurepass",
+        full_name="External Reviewer",
+        role=UserRole.EXTERNAL_REVIEWER,
+        id_number="123456789",
+        affiliation="External University",
+    )
+
+    with pytest.raises(ValueError, match="ID number is already registered"):
+        await service.register_external_reviewer(payload, Mock())
+
+    db_session.rollback.assert_called_once()
 
 
 def test_login_rejects_unapproved_reviewer(db_session: Mock) -> None:
@@ -84,6 +168,14 @@ def test_login_rejects_unapproved_reviewer(db_session: Mock) -> None:
             service.login_user(
                 UserLoginRequest(email="reviewer@example.com", password="averysecurepass")
             )
+
+
+def test_login_accepts_short_password_input_and_delegates_to_auth_check(db_session: Mock) -> None:
+    service = AuthService(db_session)
+    db_session.scalar.return_value = None
+
+    with pytest.raises(ValueError, match="Invalid credentials"):
+        service.login_user(UserLoginRequest(email="missing@example.com", password="short"))
 
 
 def test_refresh_rejects_inactive_user(db_session: Mock) -> None:

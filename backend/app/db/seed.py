@@ -7,8 +7,8 @@ from app.models.user import User
 from app.utils.location import ALLOWED_BUILDINGS
 
 
-DEFAULT_ADMIN_EMAIL = "admin@confeval.local"
-DEFAULT_ADMIN_PASSWORD = "ChangeMe123456"
+DEFAULT_ADMIN_EMAIL = "admin@confeval.com"
+DEFAULT_ADMIN_PASSWORD = "Admin123!"
 
 
 def seed_default_admin(db: Session) -> None:

@@ -34,44 +34,67 @@ This repository contains the initial implementation foundation:
 2. Implement registration, approval, and project workflows.
 3. Add reporting, exports, and remaining admin flows.
 
-## Local Development
+## Running with Docker
 
-### Infrastructure
+Everything (Postgres, Redis, MinIO, the FastAPI backend and the Next.js frontend)
+runs as containers via Docker Compose. No local Python or Node toolchain is
+required.
 
-Start PostgreSQL, Redis, and MinIO:
+All published host ports are the project defaults **+2** to avoid clashing with
+anything you may already be running locally:
+
+| Service          | Container port | Host port |
+| ---------------- | -------------- | --------- |
+| Frontend (Next)  | 3000           | **3002**  |
+| Backend (FastAPI)| 8000           | **8002**  |
+| Postgres         | 5432           | **5434**  |
+| Redis            | 6379           | **6381**  |
+| MinIO API        | 9000           | **9002**  |
+| MinIO Console    | 9001           | **9003**  |
+
+### Start the stack
 
 ```bash
 cd infrastructure
-docker compose up -d
+docker compose up --build
 ```
 
-### Backend
+The backend container automatically waits for Postgres, runs
+`alembic upgrade head`, seeds reference data, then starts `uvicorn`.
+
+Open:
+
+- Frontend: <http://localhost:3002>
+- Backend API: <http://localhost:8002/api/v1>
+- Backend health: <http://localhost:8002/health>
+- MinIO console: <http://localhost:9003> (user `minioadmin` / pass `minioadmin`)
+
+### Stop the stack
 
 ```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .[dev]
-cp .env.example .env
-alembic upgrade head
-python -m app.db.bootstrap
-uvicorn app.main:app --reload
+cd infrastructure
+docker compose down            # keep volumes
+docker compose down -v         # also drop postgres/minio/upload volumes
 ```
 
-The initial Alembic revision now contains the first full schema migration for the current model layer.
-External reviewer registration now requires a CV upload and stores the file under the configured local upload directory for admin review.
-Student project submission and the admin project approval queue are now wired through the backend and frontend, including attachment download routes.
-Admin users can now create tags, conferences, and sessions, and the protected catalog page reflects role-based conference and session visibility.
-Students can now invite up to two team members on each project, and invited users can accept or decline pending team invitations from their dashboard.
-Reviewers can now apply to sessions, and admins can approve or reject those applications from a dedicated queue.
-Admins can now assign approved session reviewers to approved projects, reviewers can draft and submit scored evaluations, and project members can read completed reviews with reviewer names and criterion-level scores.
-Authenticated users can now open an in-app notification inbox to review approval, assignment, and review events and mark them as read.
+### Common tasks
 
-### Frontend
+Tail logs for one service:
 
 ```bash
-cd frontend
-npm install
-cp .env.example .env.local
-npm run dev
+docker compose logs -f backend
+```
+
+Run an ad-hoc command (e.g. a new Alembic revision) inside the backend
+container:
+
+```bash
+docker compose run --rm backend alembic revision --autogenerate -m "msg"
+```
+
+Run the backend test suite inside the container:
+
+```bash
+docker compose run --rm backend pip install -e .[dev]
+docker compose run --rm backend pytest
 ```

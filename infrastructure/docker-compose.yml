@@ -1,4 +1,14 @@
 version: '3.9'
+
+# Host-published ports are the project defaults +2. Internal container ports stay
+# at upstream defaults so services talk to each other on the standard ports.
+#   postgres        5432 -> host 5434
+#   redis           6379 -> host 6381
+#   minio api       9000 -> host 9002
+#   minio console   9001 -> host 9003
+#   backend (api)   8000 -> host 8002
+#   frontend (web)  3000 -> host 3002
+
 services:
   postgres:
     image: postgres:16
@@ -7,14 +17,19 @@ services:
       POSTGRES_USER: confeval
       POSTGRES_PASSWORD: confeval
     ports:
-      - "5432:5432"
+      - "5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U confeval -d confeval"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:7
     ports:
-      - "6379:6379"
+      - "6381:6379"
 
   minio:
     image: minio/minio:latest
@@ -23,11 +38,55 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9002:9000"
+      - "9003:9001"
     volumes:
       - minio_data:/data
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    environment:
+      APP_NAME: ConfEval API
+      API_V1_PREFIX: /api/v1
+      ENVIRONMENT: development
+      SECRET_KEY: change-me-in-production
+      DATABASE_URL: postgresql+psycopg://confeval:confeval@postgres:5432/confeval
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      CORS_ORIGINS: '["http://localhost:3002"]'
+      OBJECT_STORAGE_ENDPOINT: http://minio:9000
+      OBJECT_STORAGE_BUCKET: confeval
+      OBJECT_STORAGE_ACCESS_KEY: minioadmin
+      OBJECT_STORAGE_SECRET_KEY: minioadmin
+      LOCAL_UPLOAD_DIR: /app/uploads
+      GOOGLE_CLIENT_ID: ""
+      GOOGLE_CLIENT_SECRET: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+    ports:
+      - "8002:8000"
+    volumes:
+      - backend_uploads:/app/uploads
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://backend:8000/api/v1
+    depends_on:
+      - backend
+    ports:
+      - "3002:3000"
 
 volumes:
   postgres_data:
   minio_data:
+  backend_uploads:

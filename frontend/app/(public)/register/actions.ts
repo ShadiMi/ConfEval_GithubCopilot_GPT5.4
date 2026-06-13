@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 
-import { parseBackendError } from "@/lib/api";
+import { parseBackendError, parseRequestError } from "@/lib/api";
 import { appConfig } from "@/lib/config";
 
 export type RegisterActionState = {
@@ -22,45 +22,53 @@ export async function registerAction(
   const idNumber = String(formData.get("idNumber") ?? "").trim();
   const cvFile = formData.get("cvFile");
 
-  const response =
-    role === "external_reviewer"
-      ? await fetch(`${appConfig.backendUrl}/auth/register/external-reviewer`, {
-          method: "POST",
-          body: (() => {
-            const payload = new FormData();
-            payload.append("full_name", fullName);
-            payload.append("email", email);
-            payload.append("password", password);
-            payload.append("affiliation", affiliation);
-            if (phoneNumber) {
-              payload.append("phone_number", phoneNumber);
-            }
-            if (idNumber) {
-              payload.append("id_number", idNumber);
-            }
-            if (cvFile instanceof File) {
-              payload.append("cv_file", cvFile);
-            }
-            return payload;
-          })(),
-          cache: "no-store",
-        })
-      : await fetch(`${appConfig.backendUrl}/auth/register`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            full_name: fullName,
-            email,
-            password,
-            role,
-            affiliation: affiliation || null,
-            phone_number: phoneNumber || null,
-            id_number: idNumber || null,
-          }),
-          cache: "no-store",
-        });
+  let response: Response;
+
+  try {
+    response =
+      role === "external_reviewer"
+        ? await fetch(`${appConfig.backendUrl}/auth/register/external-reviewer`, {
+            method: "POST",
+            body: (() => {
+              const payload = new FormData();
+              payload.append("full_name", fullName);
+              payload.append("email", email);
+              payload.append("password", password);
+              payload.append("affiliation", affiliation);
+              if (phoneNumber) {
+                payload.append("phone_number", phoneNumber);
+              }
+              if (idNumber) {
+                payload.append("id_number", idNumber);
+              }
+              if (cvFile instanceof File) {
+                payload.append("cv_file", cvFile);
+              }
+              return payload;
+            })(),
+            cache: "no-store",
+          })
+        : await fetch(`${appConfig.backendUrl}/auth/register`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              full_name: fullName,
+              email,
+              password,
+              role,
+              affiliation: affiliation || null,
+              phone_number: phoneNumber || null,
+              id_number: idNumber || null,
+            }),
+            cache: "no-store",
+          });
+  } catch (error) {
+    return {
+      error: parseRequestError(error, "Unable to reach the authentication service."),
+    };
+  }
 
   if (!response.ok) {
     return { error: await parseBackendError(response) };

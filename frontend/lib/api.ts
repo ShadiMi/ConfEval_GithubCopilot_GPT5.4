@@ -2,6 +2,14 @@ export type BackendErrorPayload = {
   detail?: string;
 };
 
+export function parseRequestError(error: unknown, fallbackMessage: string): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+
+  return fallbackMessage;
+}
+
 export async function parseBackendError(response: Response): Promise<string> {
   try {
     const data = (await response.json()) as BackendErrorPayload;

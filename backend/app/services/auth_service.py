@@ -1,5 +1,6 @@
 from fastapi import UploadFile
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.security import (
@@ -29,6 +30,14 @@ class AuthService:
         if existing_user is not None:
             raise ValueError("Email is already registered")
 
+    def _ensure_id_number_is_available(self, id_number: str | None) -> None:
+        if not id_number:
+            return
+
+        existing_user = self.db.scalar(select(User).where(User.id_number == id_number))
+        if existing_user is not None:
+            raise ValueError("ID number is already registered")
+
     def _build_user(self, payload: UserRegisterRequest) -> User:
         requires_manual_approval = payload.role in {
             UserRole.INTERNAL_REVIEWER,
@@ -49,12 +58,19 @@ class AuthService:
     def register_user(self, payload: UserRegisterRequest) -> User:
         normalized_email = str(payload.email).lower()
         self._ensure_email_is_available(normalized_email)
+        self._ensure_id_number_is_available(payload.id_number)
 
         user = self._build_user(payload)
         self.db.add(user)
         if user.requires_manual_approval:
             self.notifications.notify_admins_of_pending_reviewer(user)
-        self.db.commit()
+
+        try:
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise ValueError("ID number is already registered") from exc
+
         self.db.refresh(user)
         return user
 
@@ -64,10 +80,16 @@ class AuthService:
 
         normalized_email = str(payload.email).lower()
         self._ensure_email_is_available(normalized_email)
+        self._ensure_id_number_is_available(payload.id_number)
 
         user = self._build_user(payload)
         self.db.add(user)
-        self.db.flush()
+
+        try:
+            self.db.flush()
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise ValueError("ID number is already registered") from exc
 
         try:
             await self.files.store_reviewer_cv(user=user, upload=cv_upload)
